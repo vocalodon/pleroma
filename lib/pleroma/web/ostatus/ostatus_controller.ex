@@ -46,7 +46,7 @@ defmodule Pleroma.Web.OStatus.OStatusController do
         with [decoded | _] <- Pleroma.Web.Salmon.decode(body),
              doc <- XML.parse_document(decoded),
              uri when not is_nil(uri) <- XML.string_from_xpath("/entry/author[1]/uri", doc),
-             {:ok, user} <- Pleroma.Web.OStatus.make_user(uri, true),
+             {:ok, _} <- Pleroma.Web.OStatus.make_user(uri, true),
              {:ok, magic_key} <- Pleroma.Web.Salmon.fetch_magic_key(body),
              {:ok, doc} <- Pleroma.Web.Salmon.decode_and_validate(magic_key, body) do
           {:ok, doc}
@@ -54,7 +54,7 @@ defmodule Pleroma.Web.OStatus.OStatusController do
     end
   end
 
-  def salmon_incoming(conn, params) do
+  def salmon_incoming(conn, _) do
     {:ok, body, _conn} = read_body(conn)
     {:ok, doc} = decode_or_retry(body)
 
@@ -81,6 +81,19 @@ defmodule Pleroma.Web.OStatus.OStatusController do
          %User{} = user <- User.get_cached_by_ap_id(activity.data["actor"]) do
       case get_format(conn) do
         "html" -> redirect(conn, to: "/notice/#{activity.id}")
+        _ -> represent_activity(conn, activity, user)
+      end
+    end
+  end
+
+  def notice(conn, %{"id" => id}) do
+     with %Activity{} = activity <- Repo.get(Activity, id),
+          %User{} = user <- User.get_cached_by_ap_id(activity.data["actor"]) do
+      case get_format(conn) do
+        "html" ->
+          conn
+          |> put_resp_content_type("text/html")
+          |> send_file(200, "priv/static/index.html")
         _ -> represent_activity(conn, activity, user)
       end
     end

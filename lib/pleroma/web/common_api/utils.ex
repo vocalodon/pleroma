@@ -38,15 +38,19 @@ defmodule Pleroma.Web.CommonAPI.Utils do
     end
   end
 
-  def make_content_html(status, mentions, attachments, tags) do
+  def make_content_html(status, mentions, attachments, tags, no_attachment_links \\ false) do
     status
     |> format_input(mentions, tags)
-    |> add_attachments(attachments)
+    |> maybe_add_attachments(attachments, no_attachment_links)
   end
 
   def make_context(%Activity{data: %{"context" => context}}), do: context
   def make_context(_), do: Utils.generate_context_id
 
+  def maybe_add_attachments(text, attachments, _no_links = true), do: text
+  def maybe_add_attachments(text, attachments, _no_links) do
+    add_attachments(text, attachments)
+  end
   def add_attachments(text, attachments) do
     attachment_text = Enum.map(attachments, fn
       (%{"url" => [%{"href" => href} | _]}) ->
@@ -54,13 +58,14 @@ defmodule Pleroma.Web.CommonAPI.Utils do
         "<a href=\"#{href}\" class='attachment'>#{shortname(name)}</a>"
       _ -> ""
     end)
-    Enum.join([text | attachment_text], "<br>\n")
+    Enum.join([text | attachment_text], "<br>")
   end
 
-  def format_input(text, mentions, tags) do
-    HtmlSanitizeEx.strip_tags(text)
+  def format_input(text, mentions, _tags) do
+    text
+    |> Formatter.html_escape
     |> Formatter.linkify
-    |> String.replace("\n", "<br>\n")
+    |> String.replace("\n", "<br>")
     |> add_user_links(mentions)
     # |> add_tag_links(tags)
   end
@@ -90,7 +95,7 @@ defmodule Pleroma.Web.CommonAPI.Utils do
 
     Enum.reduce(mentions, step_one, fn ({match, %User{ap_id: ap_id}, uuid}, text) ->
       short_match = String.split(match, "@") |> tl() |> hd()
-      String.replace(text, uuid, "<a href='#{ap_id}'>@#{short_match}</a>")
+      String.replace(text, uuid, "<span><a href='#{ap_id}'>@<span>#{short_match}</span></a></span>")
     end)
   end
 

@@ -4,12 +4,11 @@ defmodule Pleroma.Web.MastodonAPI.MastodonAPIController do
   alias Pleroma.Web
   alias Pleroma.Web.MastodonAPI.{StatusView, AccountView, MastodonView}
   alias Pleroma.Web.ActivityPub.ActivityPub
-  alias Pleroma.Web.TwitterAPI.TwitterAPI
   alias Pleroma.Web.{CommonAPI, OStatus}
   alias Pleroma.Web.OAuth.{Authorization, Token, App}
   alias Comeonin.Pbkdf2
   import Ecto.Query
-  import Logger
+  require Logger
 
   def create_app(conn, params) do
     with cs <- App.register_changeset(%App{}, params) |> IO.inspect,
@@ -75,7 +74,7 @@ defmodule Pleroma.Web.MastodonAPI.MastodonAPIController do
     end
   end
 
-  def verify_credentials(%{assigns: %{user: user}} = conn, params) do
+  def verify_credentials(%{assigns: %{user: user}} = conn, _) do
     account = AccountView.render("account.json", %{user: user})
     json(conn, account)
   end
@@ -94,6 +93,7 @@ defmodule Pleroma.Web.MastodonAPI.MastodonAPIController do
   @instance Application.get_env(:pleroma, :instance)
 
   def masto_instance(conn, _params) do
+    user_count = Repo.aggregate(User.local_user_query, :count, :id)
     response = %{
       uri: Web.base_url,
       title: Keyword.get(@instance, :name),
@@ -104,17 +104,18 @@ defmodule Pleroma.Web.MastodonAPI.MastodonAPIController do
         streaming_api: String.replace(Web.base_url, ["http","https"], "wss")
       },
       stats: %{
-        user_count: 1,
         status_count: 2,
+        user_count: user_count,
         domain_count: 3
-      }
+      },
+      max_toot_chars: Keyword.get(@instance, :limit)
     }
 
     json(conn, response)
   end
 
-  def custom_emojis(conn, _params) do
-    mastodon_emoji = Pleroma.Formatter.get_custom_emoji()
+  defp mastodonized_emoji do
+    Pleroma.Formatter.get_custom_emoji()
     |> Enum.map(fn {shortcode, relative_url} ->
       url = to_string URI.merge(Web.base_url(), relative_url)
       %{
@@ -123,6 +124,10 @@ defmodule Pleroma.Web.MastodonAPI.MastodonAPIController do
         "url" => url
       }
     end)
+  end
+
+  def custom_emojis(conn, _params) do
+    mastodon_emoji = mastodonized_emoji()
     json conn, mastodon_emoji
   end
 
@@ -157,7 +162,7 @@ defmodule Pleroma.Web.MastodonAPI.MastodonAPIController do
   def public_timeline(%{assigns: %{user: user}} = conn, params) do
     params = params
     |> Map.put("type", ["Create", "Announce"])
-    |> Map.put("local_only", !!params["local"])
+    |> Map.put("local_only", params["local"] in [true, "True", "true", "1"])
     |> Map.put("blocking_user", user)
 
     activities = ActivityPub.fetch_public_activities(params)
@@ -193,6 +198,7 @@ defmodule Pleroma.Web.MastodonAPI.MastodonAPIController do
     with %Activity{} = activity <- Repo.get(Activity, id),
          activities <- ActivityPub.fetch_activities_for_context(activity.data["object"]["context"], %{"blocking_user" => user}),
          activities <- activities |> Enum.filter(fn (%{id: aid}) -> to_string(aid) != to_string(id) end),
+         activities <- activities |> Enum.filter(fn (%{data: %{"type" => type}}) -> type == "Create" end),
          grouped_activities <- Enum.group_by(activities, fn (%{id: id}) -> id < activity.id end) do
       result = %{
         ancestors: StatusView.render("index.json", for: user, activities: grouped_activities[true] || [], as: :activity) |> Enum.reverse,
@@ -203,9 +209,10 @@ defmodule Pleroma.Web.MastodonAPI.MastodonAPIController do
     end
   end
 
-  def post_status(%{assigns: %{user: user}} = conn, %{"status" => status} = params) do
+  def post_status(%{assigns: %{user: user}} = conn, %{"status" => _} = params) do
     params = params
     |> Map.put("in_reply_to_status_id", params["in_reply_to_id"])
+    |> Map.put("no_attachment_links", true)
 
     {:ok, activity} = CommonAPI.post(user, params)
     render conn, StatusView, "status.json", %{activity: activity, for: user, as: :activity}
@@ -289,7 +296,7 @@ defmodule Pleroma.Web.MastodonAPI.MastodonAPIController do
     render conn, AccountView, "relationships.json", %{user: user, targets: targets}
   end
 
-  def upload(%{assigns: %{user: user}} = conn, %{"file" => file}) do
+  def upload(%{assigns: %{user: _}} = conn, %{"file" => file}) do
     with {:ok, object} <- ActivityPub.upload(file) do
       data = object.data
       |> Map.put("id", object.id)
@@ -299,7 +306,7 @@ defmodule Pleroma.Web.MastodonAPI.MastodonAPIController do
   end
 
   def favourited_by(conn, %{"id" => id}) do
-    with %Activity{data: %{"object" => %{"likes" => likes} = data}} <- Repo.get(Activity, id) do
+    with %Activity{data: %{"object" => %{"likes" => likes}}} <- Repo.get(Activity, id) do
       q = from u in User,
         where: u.ap_id in ^likes
       users = Repo.all(q)
@@ -352,10 +359,10 @@ defmodule Pleroma.Web.MastodonAPI.MastodonAPIController do
   def follow(%{assigns: %{user: follower}} = conn, %{"id" => id}) do
     with %User{} = followed <- Repo.get(User, id),
          {:ok, follower} <- User.follow(follower, followed),
-         {:ok, activity} <- ActivityPub.follow(follower, followed) do
+         {:ok, _activity} <- ActivityPub.follow(follower, followed) do
       render conn, AccountView, "relationship.json", %{user: follower, target: followed}
     else
-      {:error, message} = err ->
+      {:error, message} ->
         conn
         |> put_resp_content_type("application/json")
         |> send_resp(403, Poison.encode!(%{"error" => message}))
@@ -365,10 +372,10 @@ defmodule Pleroma.Web.MastodonAPI.MastodonAPIController do
   def follow(%{assigns: %{user: follower}} = conn, %{"uri" => uri}) do
     with %User{} = followed <- Repo.get_by(User, nickname: uri),
          {:ok, follower} <- User.follow(follower, followed),
-         {:ok, activity} <- ActivityPub.follow(follower, followed) do
+         {:ok, _activity} <- ActivityPub.follow(follower, followed) do
       render conn, AccountView, "account.json", %{user: followed}
     else
-      {:error, message} = err ->
+      {:error, message} ->
         conn
         |> put_resp_content_type("application/json")
         |> send_resp(403, Poison.encode!(%{"error" => message}))
@@ -393,7 +400,7 @@ defmodule Pleroma.Web.MastodonAPI.MastodonAPIController do
          {:ok, blocker} <- User.block(blocker, blocked) do
       render conn, AccountView, "relationship.json", %{user: blocker, target: blocked}
     else
-      {:error, message} = err ->
+      {:error, message} ->
         conn
         |> put_resp_content_type("application/json")
         |> send_resp(403, Poison.encode!(%{"error" => message}))
@@ -405,7 +412,7 @@ defmodule Pleroma.Web.MastodonAPI.MastodonAPIController do
          {:ok, blocker} <- User.unblock(blocker, blocked) do
       render conn, AccountView, "relationship.json", %{user: blocker, target: blocked}
     else
-      {:error, message} = err ->
+      {:error, message} ->
         conn
         |> put_resp_content_type("application/json")
         |> send_resp(403, Poison.encode!(%{"error" => message}))
@@ -455,7 +462,7 @@ defmodule Pleroma.Web.MastodonAPI.MastodonAPIController do
     json(conn, res)
   end
 
-  def favourites(%{assigns: %{user: user}} = conn, params) do
+  def favourites(%{assigns: %{user: user}} = conn, _) do
     params = conn
     |> Map.put("type", "Create")
     |> Map.put("favorited_by", user.ap_id)
@@ -473,6 +480,7 @@ defmodule Pleroma.Web.MastodonAPI.MastodonAPIController do
     |> get_session(:oauth_token)
 
     if user && token do
+      mastodon_emoji = mastodonized_emoji()
       accounts = Map.put(%{}, user.id, AccountView.render("account.json", %{user: user}))
       initial_state = %{
         meta: %{
@@ -540,7 +548,7 @@ defmodule Pleroma.Web.MastodonAPI.MastodonAPIController do
         },
         push_subscription: nil,
         accounts: accounts,
-        custom_emojis: %{}
+        custom_emojis: mastodon_emoji
       } |> Poison.encode!
       conn
       |> put_layout(false)
@@ -551,9 +559,9 @@ defmodule Pleroma.Web.MastodonAPI.MastodonAPIController do
     end
   end
 
-  def login(conn, params) do
+  def login(conn, _) do
     conn
-    |> render(MastodonView, "login.html")
+    |> render(MastodonView, "login.html", %{error: false})
   end
 
   defp get_or_make_app() do
@@ -574,8 +582,18 @@ defmodule Pleroma.Web.MastodonAPI.MastodonAPIController do
          {:ok, token} <- Token.exchange_token(app, auth) do
       conn
       |> put_session(:oauth_token, token.token)
-      |> redirect(to: "/web/timelines/public")
+      |> redirect(to: "/web/getting-started")
+    else
+      _e ->
+        conn
+        |> render(MastodonView, "login.html", %{error: "Wrong username or password"})
     end
+  end
+
+  def logout(conn, _) do
+    conn
+    |> clear_session
+    |> redirect(to: "/")
   end
 
   def relationship_noop(%{assigns: %{user: user}} = conn, %{"id" => id}) do
@@ -590,7 +608,7 @@ defmodule Pleroma.Web.MastodonAPI.MastodonAPIController do
     json(conn, [])
   end
 
-  defp render_notification(user, %{id: id, activity: activity, inserted_at: created_at} = _params) do
+  def render_notification(user, %{id: id, activity: activity, inserted_at: created_at} = _params) do
     actor = User.get_cached_by_ap_id(activity.data["actor"])
     created_at = NaiveDateTime.to_iso8601(created_at)
     |> String.replace(~r/(\.\d+)?$/, ".000Z", global: false)

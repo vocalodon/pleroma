@@ -51,6 +51,11 @@ defmodule Pleroma.Web.Router do
     get "/emoji", UtilController, :emoji
   end
 
+  scope "/api/pleroma", Pleroma.Web.TwitterAPI do
+    pipe_through :authenticated_api
+    post "/follow_import", UtilController, :follow_import
+  end
+
   scope "/oauth", Pleroma.Web.OAuth do
     get "/authorize", OAuthController, :authorize
     post "/authorize", OAuthController, :create_authorization
@@ -140,7 +145,10 @@ defmodule Pleroma.Web.Router do
     get "/statuses/networkpublic_timeline", TwitterAPI.Controller, :public_and_external_timeline
     get "/statuses/user_timeline", TwitterAPI.Controller, :user_timeline
     get "/qvitter/statuses/user_timeline", TwitterAPI.Controller, :user_timeline
+    get "/users/show", TwitterAPI.Controller, :show_user
 
+    get "/statuses/followers", TwitterAPI.Controller, :followers
+    get "/statuses/friends", TwitterAPI.Controller, :friends
     get "/statuses/show/:id", TwitterAPI.Controller, :fetch_status
     get "/statusnet/conversation/:id", TwitterAPI.Controller, :fetch_conversation
 
@@ -187,8 +195,10 @@ defmodule Pleroma.Web.Router do
 
     post "/qvitter/update_avatar", TwitterAPI.Controller, :update_avatar
 
-    get "/statuses/followers", TwitterAPI.Controller, :followers
-    get "/statuses/friends", TwitterAPI.Controller, :friends
+    get "/friends/ids", TwitterAPI.Controller, :friends_ids
+    get "/friendships/no_retweets/ids", TwitterAPI.Controller, :empty_array
+
+    get "/mutes/users/ids", TwitterAPI.Controller, :empty_array
 
     get "/externalprofile/show", TwitterAPI.Controller, :external_profile
   end
@@ -202,6 +212,7 @@ defmodule Pleroma.Web.Router do
 
     get "/objects/:uuid", OStatus.OStatusController, :object
     get "/activities/:uuid", OStatus.OStatusController, :activity
+    get "/notice/:id", OStatus.OStatusController, :notice
 
     get "/users/:nickname/feed", OStatus.OStatusController, :feed
     get "/users/:nickname", OStatus.OStatusController, :feed_redirect
@@ -218,12 +229,13 @@ defmodule Pleroma.Web.Router do
     get "/webfinger", WebFinger.WebFingerController, :webfinger
   end
 
-  scope "/web", Pleroma.Web.MastodonAPI do
+  scope "/", Pleroma.Web.MastodonAPI do
     pipe_through :mastodon_html
 
-    get "/login", MastodonAPIController, :login
-    post "/login", MastodonAPIController, :login_post
-    get "/*path", MastodonAPIController, :index
+    get "/web/login", MastodonAPIController, :login
+    post "/web/login", MastodonAPIController, :login_post
+    get "/web/*path", MastodonAPIController, :index
+    delete "/auth/sign_out", MastodonAPIController, :logout
   end
 
   scope "/", Fallback do

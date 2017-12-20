@@ -20,8 +20,9 @@ defmodule Pleroma.Application do
                          limit: 2500
                        ]]),
       worker(Pleroma.Web.Federator, []),
-      worker(Pleroma.Web.Streamer, [])
+      worker(Pleroma.Web.ChatChannel.ChatChannelState, []),
     ]
+    ++ if Mix.env == :test, do: [], else: [worker(Pleroma.Web.Streamer, [])]
 
     # See http://elixir-lang.org/docs/stable/elixir/Supervisor.html
     # for other strategies and supported options

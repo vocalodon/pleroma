@@ -56,7 +56,9 @@ defmodule Pleroma.Web.MastodonAPI.StatusViewTest do
 
   test "contains mentions" do
     incoming = File.read!("test/fixtures/incoming_reply_mastodon.xml")
-    user = insert(:user, %{ap_id: "https://pleroma.soykaf.com/users/lain"})
+    # a user with this ap id might be in the cache.
+    recipient = "https://pleroma.soykaf.com/users/lain"
+    user = User.get_cached_by_ap_id(recipient) || insert(:user, %{ap_id: recipient})
 
     {:ok, [activity]} = OStatus.handle_incoming(incoming)
 
@@ -78,7 +80,7 @@ defmodule Pleroma.Web.MastodonAPI.StatusViewTest do
     }
 
     expected = %{
-      id: 1638338801,
+      id: "1638338801",
       type: "image",
       url: "someurl",
       remote_url: "someurl",
@@ -90,7 +92,7 @@ defmodule Pleroma.Web.MastodonAPI.StatusViewTest do
 
     # If theres a "id", use that instead of the generated one
     object = Map.put(object, "id", 2)
-    assert %{id: 2} = StatusView.render("attachment.json", %{attachment: object})
+    assert %{id: "2"} = StatusView.render("attachment.json", %{attachment: object})
   end
 
   test "a reblog" do

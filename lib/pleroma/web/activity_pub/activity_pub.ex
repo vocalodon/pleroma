@@ -1,6 +1,5 @@
 defmodule Pleroma.Web.ActivityPub.ActivityPub do
-  alias Pleroma.{Activity, Repo, Object, Upload, User, Web, Notification}
-  alias Ecto.{Changeset, UUID}
+  alias Pleroma.{Activity, Repo, Object, Upload, User, Notification}
   import Ecto.Query
   import Pleroma.Web.ActivityPub.Utils
   require Logger
@@ -11,6 +10,7 @@ defmodule Pleroma.Web.ActivityPub.ActivityPub do
          :ok <- insert_full_object(map) do
       {:ok, activity} = Repo.insert(%Activity{data: map, local: local, actor: map["actor"]})
       Notification.create_notifications(activity)
+      stream_out(activity)
       {:ok, activity}
     else
       %Activity{} = activity -> {:ok, activity}
@@ -18,19 +18,28 @@ defmodule Pleroma.Web.ActivityPub.ActivityPub do
     end
   end
 
+  def stream_out(activity) do
+    if activity.data["type"] in ["Create", "Announce"] do
+      Pleroma.Web.Streamer.stream("user", activity)
+      if Enum.member?(activity.data["to"], "https://www.w3.org/ns/activitystreams#Public") do
+        Pleroma.Web.Streamer.stream("public", activity)
+        if activity.local do
+          Pleroma.Web.Streamer.stream("public:local", activity)
+        end
+      end
+    end
+  end
+
   def create(to, actor, context, object, additional \\ %{}, published \\ nil, local \\ true) do
     with create_data <- make_create_data(%{to: to, actor: actor, published: published, context: context, object: object}, additional),
          {:ok, activity} <- insert(create_data, local),
          :ok <- maybe_federate(activity) do
-      if activity.data["type"] == "Create" and Enum.member?(activity.data["to"], "https://www.w3.org/ns/activitystreams#Public") do
-        Pleroma.Web.Streamer.stream("public", activity)
-      end
       {:ok, activity}
     end
   end
 
   # TODO: This is weird, maybe we shouldn't check here if we can make the activity.
-  def like(%User{ap_id: ap_id} = user, %Object{data: %{"id" => id}} = object, activity_id \\ nil, local \\ true) do
+  def like(%User{ap_id: ap_id} = user, %Object{data: %{"id" => _}} = object, activity_id \\ nil, local \\ true) do
     with nil <- get_existing_like(ap_id, object),
          like_data <- make_like_data(user, object, activity_id),
          {:ok, activity} <- insert(like_data, local),
@@ -52,7 +61,7 @@ defmodule Pleroma.Web.ActivityPub.ActivityPub do
     end
   end
 
-  def announce(%User{ap_id: ap_id} = user, %Object{data: %{"id" => id}} = object, activity_id \\ nil, local \\ true) do
+  def announce(%User{ap_id: _} = user, %Object{data: %{"id" => _}} = object, activity_id \\ nil, local \\ true) do
     with announce_data <- make_announce_data(user, object, activity_id),
          {:ok, activity} <- insert(announce_data, local),
          {:ok, object} <- add_announce_to_object(activity, object),
@@ -159,6 +168,12 @@ defmodule Pleroma.Web.ActivityPub.ActivityPub do
   end
   defp restrict_favorited_by(query, _), do: query
 
+  defp restrict_media(query, %{"only_media" => val}) when val == "true" or val == "1" do
+    from activity in query,
+      where: fragment("not (? #> '{\"object\",\"attachment\"}' = ?)", activity.data, ^[])
+  end
+  defp restrict_media(query, _), do: query
+
   # Only search through last 100_000 activities by default
   defp restrict_recent(query, %{"whole_db" => true}), do: query
   defp restrict_recent(query, _) do
@@ -191,6 +206,7 @@ defmodule Pleroma.Web.ActivityPub.ActivityPub do
     |> restrict_favorited_by(opts)
     |> restrict_recent(opts)
     |> restrict_blocked(opts)
+    |> restrict_media(opts)
     |> Repo.all
     |> Enum.reverse
   end
