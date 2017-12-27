@@ -14,7 +14,7 @@ config :pleroma, Pleroma.Upload,
 
 # Configures the endpoint
 config :pleroma, Pleroma.Web.Endpoint,
-  url: [host: "localhost"],
+  url: [host: "pleroma.vocalodon.net", scheme: "https", port: 443],  
   protocol: "https",
   secret_key_base: "aK4Abxf29xU9TTDKre9coZPUgevcVCFQJe/5xP/7Lt4BEif6idBIbjupVbOrbKxl",
   render_errors: [view: Pleroma.Web.ErrorView, accepts: ~w(json)],
@@ -42,8 +42,8 @@ version = with {version, 0} <- System.cmd("git", ["rev-parse", "HEAD"]) do
 
 config :pleroma, :instance,
   version: version,
-  name: "Pleroma",
-  email: "example@example.com",
+  name: "Vocalodon Pleroma",
+  email: "webmaster@vocalodon.net",
   limit: 5000,
   registrations_open: true
 
