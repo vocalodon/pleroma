@@ -10,10 +10,13 @@ defmodule Pleroma.Builders.UserBuilder do
       bio: "A tester.",
       ap_id: "some id"
     }
+
     Map.merge(user, data)
   end
 
   def insert(data \\ %{}) do
-    Repo.insert(build(data))
+    {:ok, user} = Repo.insert(build(data))
+    User.invalidate_cache(user)
+    {:ok, user}
   end
 end

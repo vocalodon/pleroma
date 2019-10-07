@@ -3,39 +3,50 @@ defmodule Pleroma.Web.MastodonAPI.AccountView do
   alias Pleroma.User
   alias Pleroma.Web.MastodonAPI.AccountView
   alias Pleroma.Web.CommonAPI.Utils
-
-  defp image_url(%{"url" => [ %{ "href" => href } | _ ]}), do: href
-  defp image_url(_), do: nil
+  alias Pleroma.Web.MediaProxy
 
   def render("accounts.json", %{users: users} = opts) do
     render_many(users, AccountView, "account.json", opts)
   end
 
   def render("account.json", %{user: user}) do
-    image = User.avatar_url(user)
+    image = User.avatar_url(user) |> MediaProxy.url()
+    header = User.banner_url(user) |> MediaProxy.url()
     user_info = User.user_info(user)
 
-    header = image_url(user.info["banner"]) || "https://placehold.it/700x335"
+    emojis =
+      (user.info["source_data"]["tag"] || [])
+      |> Enum.filter(fn %{"type" => t} -> t == "Emoji" end)
+      |> Enum.map(fn %{"icon" => %{"url" => url}, "name" => name} ->
+        %{
+          "shortcode" => String.trim(name, ":"),
+          "url" => MediaProxy.url(url),
+          "static_url" => MediaProxy.url(url),
+          "visible_in_picker" => false
+        }
+      end)
 
     %{
       id: to_string(user.id),
-      username: hd(String.split(user.nickname, "@")),
+      username: username_from_nickname(user.nickname),
       acct: user.nickname,
-      display_name: user.name,
-      locked: false,
+      display_name: user.name || user.nickname,
+      locked: user_info.locked,
       created_at: Utils.to_masto_date(user.inserted_at),
       followers_count: user_info.follower_count,
       following_count: user_info.following_count,
       statuses_count: user_info.note_count,
-      note: user.bio || "",
+      note: HtmlSanitizeEx.basic_html(user.bio) || "",
       url: user.ap_id,
       avatar: image,
       avatar_static: image,
       header: header,
       header_static: header,
+      emojis: emojis,
+      fields: [],
       source: %{
         note: "",
-        privacy: "public",
+        privacy: user_info.default_scope,
         sensitive: "false"
       }
     }
@@ -45,7 +56,7 @@ defmodule Pleroma.Web.MastodonAPI.AccountView do
     %{
       id: to_string(user.id),
       acct: user.nickname,
-      username: hd(String.split(user.nickname, "@")),
+      username: username_from_nickname(user.nickname),
       url: user.ap_id
     }
   end
@@ -65,4 +76,10 @@ defmodule Pleroma.Web.MastodonAPI.AccountView do
   def render("relationships.json", %{user: user, targets: targets}) do
     render_many(targets, AccountView, "relationship.json", user: user, as: :target)
   end
+
+  defp username_from_nickname(string) when is_binary(string) do
+    hd(String.split(string, "@"))
+  end
+
+  defp username_from_nickname(_), do: nil
 end

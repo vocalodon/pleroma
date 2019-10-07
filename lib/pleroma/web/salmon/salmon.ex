@@ -29,7 +29,8 @@ defmodule Pleroma.Web.Salmon do
     with [data, _, _, _, _] <- decode(salmon),
          doc <- XML.parse_document(data),
          uri when not is_nil(uri) <- XML.string_from_xpath("/entry/author[1]/uri", doc),
-         {:ok, %{info: %{"magic_key" => magic_key}}} <- Pleroma.Web.OStatus.find_or_make_user(uri) do
+         {:ok, public_key} <- User.get_public_key_for_ap_id(uri),
+         magic_key <- encode_key(public_key) do
       {:ok, magic_key}
     end
   end
@@ -37,9 +38,10 @@ defmodule Pleroma.Web.Salmon do
   def decode_and_validate(magickey, salmon) do
     [data, type, encoding, alg, sig] = decode(salmon)
 
-    signed_text = [data, type, encoding, alg]
-    |> Enum.map(&Base.url_encode64/1)
-    |> Enum.join(".")
+    signed_text =
+      [data, type, encoding, alg]
+      |> Enum.map(&Base.url_encode64/1)
+      |> Enum.join(".")
 
     key = decode_key(magickey)
 
@@ -53,22 +55,23 @@ defmodule Pleroma.Web.Salmon do
   end
 
   def decode_key("RSA." <> magickey) do
-    make_integer = fn(bin) ->
+    make_integer = fn bin ->
       list = :erlang.binary_to_list(bin)
-      Enum.reduce(list, 0, fn (el, acc) -> (acc <<< 8) ||| el end)
+      Enum.reduce(list, 0, fn el, acc -> acc <<< 8 ||| el end)
     end
 
-    [modulus, exponent] = magickey
-    |> String.split(".")
-    |> Enum.map(fn (n) -> Base.url_decode64!(n, padding: false) end)
-    |> Enum.map(make_integer)
+    [modulus, exponent] =
+      magickey
+      |> String.split(".")
+      |> Enum.map(fn n -> Base.url_decode64!(n, padding: false) end)
+      |> Enum.map(make_integer)
 
     {:RSAPublicKey, modulus, exponent}
   end
 
   def encode_key({:RSAPublicKey, modulus, exponent}) do
-    modulus_enc = :binary.encode_unsigned(modulus) |> Base.url_encode64
-    exponent_enc = :binary.encode_unsigned(exponent) |> Base.url_encode64
+    modulus_enc = :binary.encode_unsigned(modulus) |> Base.url_encode64()
+    exponent_enc = :binary.encode_unsigned(exponent) |> Base.url_encode64()
 
     "RSA.#{modulus_enc}.#{exponent_enc}"
   end
@@ -77,20 +80,25 @@ defmodule Pleroma.Web.Salmon do
   # We try at compile time to generate natively an RSA key otherwise we fallback on the old way.
   try do
     _ = :public_key.generate_key({:rsa, 2048, 65537})
+
     def generate_rsa_pem do
       key = :public_key.generate_key({:rsa, 2048, 65537})
       entry = :public_key.pem_entry_encode(:RSAPrivateKey, key)
-      pem = :public_key.pem_encode([entry]) |> String.trim_trailing
+      pem = :public_key.pem_encode([entry]) |> String.trim_trailing()
       {:ok, pem}
     end
   rescue
     _ ->
       def generate_rsa_pem do
         port = Port.open({:spawn, "openssl genrsa"}, [:binary])
-        {:ok, pem} = receive do
-          {^port, {:data, pem}} -> {:ok, pem}
-        end
+
+        {:ok, pem} =
+          receive do
+            {^port, {:data, pem}} -> {:ok, pem}
+          end
+
         Port.close(port)
+
         if Regex.match?(~r/RSA PRIVATE KEY/, pem) do
           {:ok, pem}
         else
@@ -112,17 +120,20 @@ defmodule Pleroma.Web.Salmon do
     encoding = "base64url"
     alg = "RSA-SHA256"
 
-    signed_text = [doc, type, encoding, alg]
-    |> Enum.map(&Base.url_encode64/1)
-    |> Enum.join(".")
+    signed_text =
+      [doc, type, encoding, alg]
+      |> Enum.map(&Base.url_encode64/1)
+      |> Enum.join(".")
 
-    signature = signed_text
-    |> :public_key.sign(:sha256, private_key)
-    |> to_string
-    |> Base.url_encode64
+    signature =
+      signed_text
+      |> :public_key.sign(:sha256, private_key)
+      |> to_string
+      |> Base.url_encode64()
 
-    doc_base64 = doc
-    |> Base.url_encode64
+    doc_base64 =
+      doc
+      |> Base.url_encode64()
 
     # Don't need proper xml building, these strings are safe to leave unescaped
     salmon = """
@@ -138,37 +149,59 @@ defmodule Pleroma.Web.Salmon do
     {:ok, salmon}
   end
 
-  def remote_users(%{data: %{"to" => to}}) do
+  def remote_users(%{data: %{"to" => to} = data}) do
+    to = to ++ (data["cc"] || [])
+
     to
-    |> Enum.map(fn(id) -> User.get_cached_by_ap_id(id) end)
-    |> Enum.filter(fn(user) -> user && !user.local end)
+    |> Enum.map(fn id -> User.get_cached_by_ap_id(id) end)
+    |> Enum.filter(fn user -> user && !user.local end)
   end
 
   defp send_to_user(%{info: %{"salmon" => salmon}}, feed, poster) do
-    with {:ok, %{status_code: code}} <- poster.(salmon, feed, [{"Content-Type", "application/magic-envelope+xml"}], timeout: 10000, recv_timeout: 20000) do
+    with {:ok, %{status_code: code}} <-
+           poster.(
+             salmon,
+             feed,
+             [{"Content-Type", "application/magic-envelope+xml"}],
+             timeout: 10000,
+             recv_timeout: 20000,
+             hackney: [pool: :default]
+           ) do
       Logger.debug(fn -> "Pushed to #{salmon}, code #{code}" end)
     else
-      e -> Logger.debug(fn -> "Pushing salmon to #{salmon} failed, #{inspect(e)}" end)
+      e -> Logger.debug(fn -> "Pushing Salmon to #{salmon} failed, #{inspect(e)}" end)
     end
   end
 
-  defp send_to_user(_,_,_), do: nil
+  defp send_to_user(_, _, _), do: nil
 
+  @supported_activities [
+    "Create",
+    "Follow",
+    "Like",
+    "Announce",
+    "Undo",
+    "Delete"
+  ]
   def publish(user, activity, poster \\ &@httpoison.post/4)
-  def publish(%{info: %{"keys" => keys}} = user, activity, poster) do
+
+  def publish(%{info: %{"keys" => keys}} = user, %{data: %{"type" => type}} = activity, poster)
+      when type in @supported_activities do
     feed = ActivityRepresenter.to_simple_form(activity, user, true)
-    |> ActivityRepresenter.wrap_with_entry
-    |> :xmerl.export_simple(:xmerl_xml)
-    |> to_string
 
     if feed do
+      feed =
+        ActivityRepresenter.wrap_with_entry(feed)
+        |> :xmerl.export_simple(:xmerl_xml)
+        |> to_string
+
       {:ok, private, _} = keys_from_pem(keys)
       {:ok, feed} = encode(private, feed)
 
       remote_users(activity)
-      |> Enum.each(fn(remote_user) ->
+      |> Enum.each(fn remote_user ->
         Task.start(fn ->
-          Logger.debug(fn -> "sending salmon to #{remote_user.ap_id}" end)
+          Logger.debug(fn -> "Sending Salmon to #{remote_user.ap_id}" end)
           send_to_user(remote_user, feed, poster)
         end)
       end)

@@ -15,9 +15,33 @@ defmodule Pleroma.Web.TwitterAPI.UserViewTest do
 
   test "A user with an avatar object", %{user: user} do
     image = "image"
-    user = %{ user | avatar: %{ "url" => [%{"href" => image}] }}
+    user = %{user | avatar: %{"url" => [%{"href" => image}]}}
     represented = UserView.render("show.json", %{user: user})
     assert represented["profile_image_url"] == image
+  end
+
+  test "A user with emoji in username", %{user: user} do
+    expected =
+      "<img height=\"32px\" width=\"32px\" alt=\"karjalanpiirakka\" title=\"karjalanpiirakka\" src=\"/file.png\" /> man"
+
+    user = %{
+      user
+      | info: %{
+          "source_data" => %{
+            "tag" => [
+              %{
+                "type" => "Emoji",
+                "icon" => %{"url" => "/file.png"},
+                "name" => ":karjalanpiirakka:"
+              }
+            ]
+          }
+        }
+    }
+
+    user = %{user | name: ":karjalanpiirakka: man"}
+    represented = UserView.render("show.json", %{user: user})
+    assert represented["name_html"] == expected
   end
 
   test "A user" do
@@ -31,16 +55,19 @@ defmodule Pleroma.Web.TwitterAPI.UserViewTest do
     User.follow(second_follower, user)
     User.follow(user, follower)
     {:ok, user} = User.update_follower_count(user)
-    Cachex.set(:user_cache, "user_info:#{user.id}", User.user_info(Repo.get!(User, user.id)))
+    Cachex.put(:user_cache, "user_info:#{user.id}", User.user_info(Repo.get!(User, user.id)))
 
-    image = "https://placehold.it/48x48"
+    image = "http://localhost:4001/images/avi.png"
+    banner = "http://localhost:4001/images/banner.png"
 
     represented = %{
       "id" => user.id,
       "name" => user.name,
       "screen_name" => user.nickname,
-      "description" => HtmlSanitizeEx.strip_tags(user.bio),
-      "created_at" => user.inserted_at |> Utils.format_naive_asctime,
+      "name_html" => user.name,
+      "description" => HtmlSanitizeEx.strip_tags(user.bio |> String.replace("<br>", "\n")),
+      "description_html" => HtmlSanitizeEx.basic_html(user.bio),
+      "created_at" => user.inserted_at |> Utils.format_naive_asctime(),
       "favourites_count" => 0,
       "statuses_count" => 1,
       "friends_count" => 1,
@@ -52,10 +79,15 @@ defmodule Pleroma.Web.TwitterAPI.UserViewTest do
       "following" => false,
       "follows_you" => false,
       "statusnet_blocking" => false,
-      "rights" => %{},
+      "rights" => %{
+        "delete_others_notice" => false
+      },
       "statusnet_profile_url" => user.ap_id,
-      "cover_photo" => nil,
-      "background_image" => nil
+      "cover_photo" => banner,
+      "background_image" => nil,
+      "is_local" => true,
+      "locked" => false,
+      "default_scope" => "public"
     }
 
     assert represented == UserView.render("show.json", %{user: user})
@@ -64,13 +96,17 @@ defmodule Pleroma.Web.TwitterAPI.UserViewTest do
   test "A user for a given other follower", %{user: user} do
     {:ok, follower} = UserBuilder.insert(%{following: [User.ap_followers(user)]})
     {:ok, user} = User.update_follower_count(user)
-    image = "https://placehold.it/48x48"
+    image = "http://localhost:4001/images/avi.png"
+    banner = "http://localhost:4001/images/banner.png"
+
     represented = %{
       "id" => user.id,
       "name" => user.name,
       "screen_name" => user.nickname,
-      "description" => HtmlSanitizeEx.strip_tags(user.bio),
-      "created_at" => user.inserted_at |> Utils.format_naive_asctime,
+      "name_html" => user.name,
+      "description" => HtmlSanitizeEx.strip_tags(user.bio |> String.replace("<br>", "\n")),
+      "description_html" => HtmlSanitizeEx.basic_html(user.bio),
+      "created_at" => user.inserted_at |> Utils.format_naive_asctime(),
       "favourites_count" => 0,
       "statuses_count" => 0,
       "friends_count" => 0,
@@ -82,10 +118,15 @@ defmodule Pleroma.Web.TwitterAPI.UserViewTest do
       "following" => true,
       "follows_you" => false,
       "statusnet_blocking" => false,
-      "rights" => %{},
+      "rights" => %{
+        "delete_others_notice" => false
+      },
       "statusnet_profile_url" => user.ap_id,
-      "cover_photo" => nil,
-      "background_image" => nil
+      "cover_photo" => banner,
+      "background_image" => nil,
+      "is_local" => true,
+      "locked" => false,
+      "default_scope" => "public"
     }
 
     assert represented == UserView.render("show.json", %{user: user, for: follower})
@@ -95,13 +136,17 @@ defmodule Pleroma.Web.TwitterAPI.UserViewTest do
     follower = insert(:user)
     {:ok, follower} = User.follow(follower, user)
     {:ok, user} = User.update_follower_count(user)
-    image = "https://placehold.it/48x48"
+    image = "http://localhost:4001/images/avi.png"
+    banner = "http://localhost:4001/images/banner.png"
+
     represented = %{
       "id" => follower.id,
       "name" => follower.name,
       "screen_name" => follower.nickname,
-      "description" => HtmlSanitizeEx.strip_tags(follower.bio),
-      "created_at" => follower.inserted_at |> Utils.format_naive_asctime,
+      "name_html" => follower.name,
+      "description" => HtmlSanitizeEx.strip_tags(follower.bio |> String.replace("<br>", "\n")),
+      "description_html" => HtmlSanitizeEx.basic_html(follower.bio),
+      "created_at" => follower.inserted_at |> Utils.format_naive_asctime(),
       "favourites_count" => 0,
       "statuses_count" => 0,
       "friends_count" => 1,
@@ -113,26 +158,42 @@ defmodule Pleroma.Web.TwitterAPI.UserViewTest do
       "following" => false,
       "follows_you" => true,
       "statusnet_blocking" => false,
-      "rights" => %{},
+      "rights" => %{
+        "delete_others_notice" => false
+      },
       "statusnet_profile_url" => follower.ap_id,
-      "cover_photo" => nil,
-      "background_image" => nil
+      "cover_photo" => banner,
+      "background_image" => nil,
+      "is_local" => true,
+      "locked" => false,
+      "default_scope" => "public"
     }
 
     assert represented == UserView.render("show.json", %{user: follower, for: user})
   end
 
-  test "A blocked user for the blocker", %{user: user} do
+  test "a user that is a moderator" do
+    user = insert(:user, %{info: %{"is_moderator" => true}})
+    represented = UserView.render("show.json", %{user: user, for: user})
+
+    assert represented["rights"]["delete_others_notice"]
+  end
+
+  test "A blocked user for the blocker" do
     user = insert(:user)
     blocker = insert(:user)
     User.block(blocker, user)
-    image = "https://placehold.it/48x48"
+    image = "http://localhost:4001/images/avi.png"
+    banner = "http://localhost:4001/images/banner.png"
+
     represented = %{
       "id" => user.id,
       "name" => user.name,
       "screen_name" => user.nickname,
-      "description" => HtmlSanitizeEx.strip_tags(user.bio),
-      "created_at" => user.inserted_at |> Utils.format_naive_asctime,
+      "name_html" => user.name,
+      "description" => HtmlSanitizeEx.strip_tags(user.bio |> String.replace("<br>", "\n")),
+      "description_html" => HtmlSanitizeEx.basic_html(user.bio),
+      "created_at" => user.inserted_at |> Utils.format_naive_asctime(),
       "favourites_count" => 0,
       "statuses_count" => 0,
       "friends_count" => 0,
@@ -144,10 +205,15 @@ defmodule Pleroma.Web.TwitterAPI.UserViewTest do
       "following" => false,
       "follows_you" => false,
       "statusnet_blocking" => true,
-      "rights" => %{},
+      "rights" => %{
+        "delete_others_notice" => false
+      },
       "statusnet_profile_url" => user.ap_id,
-      "cover_photo" => nil,
-      "background_image" => nil
+      "cover_photo" => banner,
+      "background_image" => nil,
+      "is_local" => true,
+      "locked" => false,
+      "default_scope" => "public"
     }
 
     blocker = Repo.get(User, blocker.id)

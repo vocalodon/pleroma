@@ -21,6 +21,8 @@ defmodule Pleroma.Web.OStatus.UserRepresenterTest do
     <summary>#{user.bio}</summary>
     <name>#{user.nickname}</name>
     <link rel="avatar" href="#{User.avatar_url(user)}" />
+    <link rel="header" href="#{User.banner_url(user)}" />
+    <ap_enabled>true</ap_enabled>
     """
 
     assert clean(res) == clean(expected)

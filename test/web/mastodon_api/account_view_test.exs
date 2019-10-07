@@ -5,7 +5,24 @@ defmodule Pleroma.Web.MastodonAPI.AccountViewTest do
   alias Pleroma.User
 
   test "Represent a user account" do
-    user = insert(:user, %{info: %{"note_count" => 5, "follower_count" => 3}, nickname: "shp@shitposter.club", inserted_at: ~N[2017-08-15 15:47:06.597036]})
+    source_data = %{
+      "tag" => [
+        %{
+          "type" => "Emoji",
+          "icon" => %{"url" => "/file.png"},
+          "name" => ":karjalanpiirakka:"
+        }
+      ]
+    }
+
+    user =
+      insert(:user, %{
+        info: %{"note_count" => 5, "follower_count" => 3, "source_data" => source_data},
+        nickname: "shp@shitposter.club",
+        name: ":karjalanpiirakka: shp",
+        bio: "<script src=\"invalid-html\"></script><span>valid html</span>",
+        inserted_at: ~N[2017-08-15 15:47:06.597036]
+      })
 
     expected = %{
       id: to_string(user.id),
@@ -17,12 +34,21 @@ defmodule Pleroma.Web.MastodonAPI.AccountViewTest do
       followers_count: 3,
       following_count: 0,
       statuses_count: 5,
-      note: user.bio,
+      note: "<span>valid html</span>",
       url: user.ap_id,
-      avatar: "https://placehold.it/48x48",
-      avatar_static: "https://placehold.it/48x48",
-      header: "https://placehold.it/700x335",
-      header_static: "https://placehold.it/700x335",
+      avatar: "http://localhost:4001/images/avi.png",
+      avatar_static: "http://localhost:4001/images/avi.png",
+      header: "http://localhost:4001/images/banner.png",
+      header_static: "http://localhost:4001/images/banner.png",
+      emojis: [
+        %{
+          "static_url" => "/file.png",
+          "url" => "/file.png",
+          "shortcode" => "karjalanpiirakka",
+          "visible_in_picker" => false
+        }
+      ],
+      fields: [],
       source: %{
         note: "",
         privacy: "public",
@@ -55,7 +81,7 @@ defmodule Pleroma.Web.MastodonAPI.AccountViewTest do
 
     expected = %{
       id: to_string(other_user.id),
-      following: true,
+      following: false,
       followed_by: false,
       blocking: true,
       muting: false,

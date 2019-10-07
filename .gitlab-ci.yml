@@ -1,4 +1,4 @@
-image: elixir:1.5
+image: elixir:1.6.4
 
 services:
   - postgres:9.6.2
@@ -7,8 +7,10 @@ variables:
   POSTGRES_DB: pleroma_test
   POSTGRES_USER: postgres
   POSTGRES_PASSWORD: postgres
+  DB_HOST: postgres
 
 stages:
+  - lint
   - test
 
 before_script:
@@ -18,7 +20,12 @@ before_script:
   - MIX_ENV=test mix ecto.create
   - MIX_ENV=test mix ecto.migrate
 
+lint:
+  stage: lint
+  script:
+    - MIX_ENV=test mix format --check-formatted
+
 unit-testing:
   stage: test
   script:
-    - MIX_ENV=test mix test
+    - MIX_ENV=test mix test --trace

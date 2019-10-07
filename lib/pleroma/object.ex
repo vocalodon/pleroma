@@ -4,14 +4,14 @@ defmodule Pleroma.Object do
   import Ecto.{Query, Changeset}
 
   schema "objects" do
-    field :data, :map
+    field(:data, :map)
 
     timestamps()
   end
 
   def create(data) do
     Object.change(%Object{}, %{data: data})
-    |> Repo.insert
+    |> Repo.insert()
   end
 
   def change(struct, params \\ %{}) do
@@ -22,18 +22,24 @@ defmodule Pleroma.Object do
   end
 
   def get_by_ap_id(nil), do: nil
+
   def get_by_ap_id(ap_id) do
-    Repo.one(from object in Object,
-      where: fragment("(?)->>'id' = ?", object.data, ^ap_id))
+    Repo.one(from(object in Object, where: fragment("(?)->>'id' = ?", object.data, ^ap_id)))
   end
 
+  def normalize(obj) when is_map(obj), do: Object.get_by_ap_id(obj["id"])
+  def normalize(ap_id) when is_binary(ap_id), do: Object.get_by_ap_id(ap_id)
+  def normalize(_), do: nil
+
   def get_cached_by_ap_id(ap_id) do
-    if Mix.env == :test do
+    if Mix.env() == :test do
       get_by_ap_id(ap_id)
     else
       key = "object:#{ap_id}"
-      Cachex.get!(:user_cache, key, fallback: fn(_) ->
+
+      Cachex.fetch!(:user_cache, key, fn _ ->
         object = get_by_ap_id(ap_id)
+
         if object do
           {:commit, object}
         else

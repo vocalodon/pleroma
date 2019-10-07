@@ -1,7 +1,13 @@
 {
-  "name": "Vocalodon Pleroma BETA",
-  "theme": "base16-pleroma-light.css",
-  "background": "/static/bg.jpg",
+  "theme": "pleroma-dark",
+  "background": "/static/aurora_borealis.jpg",
   "logo": "/static/logo.png",
-  "registrationOpen": true
+  "logoMask": true,
+  "logoMargin": ".1em",
+  "redirectRootNoLogin": "/main/all",
+  "redirectRootLogin": "/main/friends",
+  "chatDisabled": false,
+  "showInstanceSpecificPanel": false,
+  "scopeOptionsEnabled": false,
+  "collapseMessageWithSubject": false
 }

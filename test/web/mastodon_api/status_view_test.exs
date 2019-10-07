@@ -13,8 +13,9 @@ defmodule Pleroma.Web.MastodonAPI.StatusViewTest do
 
     status = StatusView.render("status.json", %{activity: note})
 
-    created_at = (note.data["object"]["published"] || "")
-    |> String.replace(~r/\.\d+Z/, ".000Z")
+    created_at =
+      (note.data["object"]["published"] || "")
+      |> String.replace(~r/\.\d+Z/, ".000Z")
 
     expected = %{
       id: to_string(note.id),
@@ -54,11 +55,27 @@ defmodule Pleroma.Web.MastodonAPI.StatusViewTest do
     assert status == expected
   end
 
+  test "a reply" do
+    note = insert(:note_activity)
+    user = insert(:user)
+
+    {:ok, activity} =
+      CommonAPI.post(user, %{"status" => "he", "in_reply_to_status_id" => note.id})
+
+    status = StatusView.render("status.json", %{activity: activity})
+
+    assert status.in_reply_to_id == to_string(note.id)
+
+    [status] = StatusView.render("index.json", %{activities: [activity], as: :activity})
+
+    assert status.in_reply_to_id == to_string(note.id)
+  end
+
   test "contains mentions" do
     incoming = File.read!("test/fixtures/incoming_reply_mastodon.xml")
     # a user with this ap id might be in the cache.
     recipient = "https://pleroma.soykaf.com/users/lain"
-    user = User.get_cached_by_ap_id(recipient) || insert(:user, %{ap_id: recipient})
+    user = insert(:user, %{ap_id: recipient})
 
     {:ok, [activity]} = OStatus.handle_incoming(incoming)
 
@@ -85,7 +102,8 @@ defmodule Pleroma.Web.MastodonAPI.StatusViewTest do
       url: "someurl",
       remote_url: "someurl",
       preview_url: "someurl",
-      text_url: "someurl"
+      text_url: "someurl",
+      description: nil
     }
 
     assert expected == StatusView.render("attachment.json", %{attachment: object})

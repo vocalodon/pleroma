@@ -1,14 +1,15 @@
 defmodule Pleroma.Web.UserSocket do
   use Phoenix.Socket
   alias Pleroma.User
-  alias Comeonin.Pbkdf2
 
   ## Channels
   # channel "room:*", Pleroma.Web.RoomChannel
-  channel "chat:*", Pleroma.Web.ChatChannel
+  if Application.get_env(:pleroma, :chat) |> Keyword.get(:enabled) do
+    channel("chat:*", Pleroma.Web.ChatChannel)
+  end
 
   ## Transports
-  transport :websocket, Phoenix.Transports.WebSocket
+  transport(:websocket, Phoenix.Transports.WebSocket)
   # transport :longpoll, Phoenix.Transports.LongPoll
 
   # Socket params are passed from the client and can

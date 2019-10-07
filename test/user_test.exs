@@ -10,15 +10,15 @@ defmodule Pleroma.UserTest do
   import Ecto.Query
 
   test "ap_id returns the activity pub id for the user" do
-    user = UserBuilder.build
+    user = UserBuilder.build()
 
-    expected_ap_id = "#{Pleroma.Web.base_url}/users/#{user.nickname}"
+    expected_ap_id = "#{Pleroma.Web.base_url()}/users/#{user.nickname}"
 
     assert expected_ap_id == User.ap_id(user)
   end
 
   test "ap_followers returns the followers collection for the user" do
-    user = UserBuilder.build
+    user = UserBuilder.build()
 
     expected_followers_collection = "#{User.ap_id(user)}/followers"
 
@@ -46,27 +46,37 @@ defmodule Pleroma.UserTest do
     {:error, _} = User.follow(user, followed)
   end
 
-  test "following a remote user will ensure a websub subscription is present" do
-    user = insert(:user)
-    {:ok, followed} = OStatus.make_user("shp@social.heldscal.la")
+  test "can't follow a user who blocked us" do
+    blocker = insert(:user)
+    blockee = insert(:user)
 
-    assert followed.local == false
+    {:ok, blocker} = User.block(blocker, blockee)
 
-    {:ok, user} = User.follow(user, followed)
-    assert User.ap_followers(followed) in user.following
-
-    query = from w in WebsubClientSubscription,
-    where: w.topic == ^followed.info["topic"]
-    websub = Repo.one(query)
-
-    assert websub
+    {:error, _} = User.follow(blockee, blocker)
   end
+
+  # This is a somewhat useless test.
+  # test "following a remote user will ensure a websub subscription is present" do
+  #   user = insert(:user)
+  #   {:ok, followed} = OStatus.make_user("shp@social.heldscal.la")
+
+  #   assert followed.local == false
+
+  #   {:ok, user} = User.follow(user, followed)
+  #   assert User.ap_followers(followed) in user.following
+
+  #   query = from w in WebsubClientSubscription,
+  #   where: w.topic == ^followed.info["topic"]
+  #   websub = Repo.one(query)
+
+  #   assert websub
+  # end
 
   test "unfollow takes a user and another user" do
     followed = insert(:user)
     user = insert(:user, %{following: [User.ap_followers(followed)]})
 
-    {:ok, user, _activity } = User.unfollow(user, followed)
+    {:ok, user, _activity} = User.unfollow(user, followed)
 
     user = Repo.get(User, user.id)
 
@@ -81,7 +91,6 @@ defmodule Pleroma.UserTest do
     user = Repo.get(User, user.id)
     assert user.following == [user.ap_id]
   end
-
 
   test "test if a user is following another user" do
     followed = insert(:user)
@@ -101,13 +110,14 @@ defmodule Pleroma.UserTest do
       email: "email@example.com"
     }
 
-    test "it requires a bio, email, name, nickname and password" do
+    test "it requires an email, name, nickname and password, bio is optional" do
       @full_user_data
-      |> Map.keys
-      |> Enum.each(fn (key) ->
+      |> Map.keys()
+      |> Enum.each(fn key ->
         params = Map.delete(@full_user_data, key)
         changeset = User.register_changeset(%User{}, params)
-        assert changeset.valid? == false
+
+        assert if key == :bio, do: changeset.valid?, else: not changeset.valid?
       end)
     end
 
@@ -118,7 +128,11 @@ defmodule Pleroma.UserTest do
 
       assert is_binary(changeset.changes[:password_hash])
       assert changeset.changes[:ap_id] == User.ap_id(%User{nickname: @full_user_data.nickname})
-      assert changeset.changes[:following] == [User.ap_followers(%User{nickname: @full_user_data.nickname})]
+
+      assert changeset.changes[:following] == [
+               User.ap_followers(%User{nickname: @full_user_data.nickname})
+             ]
+
       assert changeset.changes.follower_address == "#{changeset.changes.ap_id}/followers"
     end
   end
@@ -156,12 +170,24 @@ defmodule Pleroma.UserTest do
 
   test "returns an ap_id for a user" do
     user = insert(:user)
-    assert User.ap_id(user) == Pleroma.Web.Router.Helpers.o_status_url(Pleroma.Web.Endpoint, :feed_redirect, user.nickname)
+
+    assert User.ap_id(user) ==
+             Pleroma.Web.Router.Helpers.o_status_url(
+               Pleroma.Web.Endpoint,
+               :feed_redirect,
+               user.nickname
+             )
   end
 
   test "returns an ap_followers link for a user" do
     user = insert(:user)
-    assert User.ap_followers(user) == Pleroma.Web.Router.Helpers.o_status_url(Pleroma.Web.Endpoint, :feed_redirect, user.nickname) <> "/followers"
+
+    assert User.ap_followers(user) ==
+             Pleroma.Web.Router.Helpers.o_status_url(
+               Pleroma.Web.Endpoint,
+               :feed_redirect,
+               user.nickname
+             ) <> "/followers"
   end
 
   describe "remote user creation changeset" do
@@ -182,7 +208,8 @@ defmodule Pleroma.UserTest do
     test "it sets the follower_adress" do
       cs = User.remote_user_creation(@valid_remote)
       # remote users get a fake local follower address
-      assert cs.changes.follower_address == User.ap_followers(%User{ nickname: @valid_remote[:nickname] })
+      assert cs.changes.follower_address ==
+               User.ap_followers(%User{nickname: @valid_remote[:nickname]})
     end
 
     test "it enforces the fqn format for nicknames" do
@@ -193,8 +220,8 @@ defmodule Pleroma.UserTest do
     end
 
     test "it has required fields" do
-      [:name, :nickname, :ap_id]
-      |> Enum.each(fn (field) ->
+      [:name, :ap_id]
+      |> Enum.each(fn field ->
         cs = User.remote_user_creation(Map.delete(@valid_remote, field))
         refute cs.valid?
       end)
@@ -202,7 +229,7 @@ defmodule Pleroma.UserTest do
 
     test "it restricts some sizes" do
       [bio: 5000, name: 100]
-      |> Enum.each(fn ({field, size}) ->
+      |> Enum.each(fn {field, size} ->
         string = String.pad_leading(".", size)
         cs = User.remote_user_creation(Map.put(@valid_remote, field, string))
         assert cs.valid?
@@ -278,6 +305,25 @@ defmodule Pleroma.UserTest do
       assert user.info["note_count"] == 2
     end
 
+    test "it decreases the info->note_count property" do
+      note = insert(:note)
+      user = User.get_by_ap_id(note.data["actor"])
+
+      assert user.info["note_count"] == nil
+
+      {:ok, user} = User.increase_note_count(user)
+
+      assert user.info["note_count"] == 1
+
+      {:ok, user} = User.decrease_note_count(user)
+
+      assert user.info["note_count"] == 0
+
+      {:ok, user} = User.decrease_note_count(user)
+
+      assert user.info["note_count"] == 0
+    end
+
     test "it sets the info->follower_count property" do
       user = insert(:user)
       follower = insert(:user)
@@ -313,6 +359,82 @@ defmodule Pleroma.UserTest do
 
       refute User.blocks?(user, blocked_user)
     end
+
+    test "blocks tear down cyclical follow relationships" do
+      blocker = insert(:user)
+      blocked = insert(:user)
+
+      {:ok, blocker} = User.follow(blocker, blocked)
+      {:ok, blocked} = User.follow(blocked, blocker)
+
+      assert User.following?(blocker, blocked)
+      assert User.following?(blocked, blocker)
+
+      {:ok, blocker} = User.block(blocker, blocked)
+      blocked = Repo.get(User, blocked.id)
+
+      assert User.blocks?(blocker, blocked)
+
+      refute User.following?(blocker, blocked)
+      refute User.following?(blocked, blocker)
+    end
+
+    test "blocks tear down blocker->blocked follow relationships" do
+      blocker = insert(:user)
+      blocked = insert(:user)
+
+      {:ok, blocker} = User.follow(blocker, blocked)
+
+      assert User.following?(blocker, blocked)
+      refute User.following?(blocked, blocker)
+
+      {:ok, blocker} = User.block(blocker, blocked)
+      blocked = Repo.get(User, blocked.id)
+
+      assert User.blocks?(blocker, blocked)
+
+      refute User.following?(blocker, blocked)
+      refute User.following?(blocked, blocker)
+    end
+
+    test "blocks tear down blocked->blocker follow relationships" do
+      blocker = insert(:user)
+      blocked = insert(:user)
+
+      {:ok, blocked} = User.follow(blocked, blocker)
+
+      refute User.following?(blocker, blocked)
+      assert User.following?(blocked, blocker)
+
+      {:ok, blocker} = User.block(blocker, blocked)
+      blocked = Repo.get(User, blocked.id)
+
+      assert User.blocks?(blocker, blocked)
+
+      refute User.following?(blocker, blocked)
+      refute User.following?(blocked, blocker)
+    end
+  end
+
+  describe "domain blocking" do
+    test "blocks domains" do
+      user = insert(:user)
+      collateral_user = insert(:user, %{ap_id: "https://awful-and-rude-instance.com/user/bully"})
+
+      {:ok, user} = User.block_domain(user, "awful-and-rude-instance.com")
+
+      assert User.blocks?(user, collateral_user)
+    end
+
+    test "unblocks domains" do
+      user = insert(:user)
+      collateral_user = insert(:user, %{ap_id: "https://awful-and-rude-instance.com/user/bully"})
+
+      {:ok, user} = User.block_domain(user, "awful-and-rude-instance.com")
+      {:ok, user} = User.unblock_domain(user, "awful-and-rude-instance.com")
+
+      refute User.blocks?(user, collateral_user)
+    end
   end
 
   test "get recipients from activity" do
@@ -321,12 +443,16 @@ defmodule Pleroma.UserTest do
     user_two = insert(:user, local: false)
     addressed = insert(:user, local: true)
     addressed_remote = insert(:user, local: false)
-    {:ok, activity} = CommonAPI.post(actor, %{"status" => "hey @#{addressed.nickname} @#{addressed_remote.nickname}"})
+
+    {:ok, activity} =
+      CommonAPI.post(actor, %{
+        "status" => "hey @#{addressed.nickname} @#{addressed_remote.nickname}"
+      })
 
     assert [addressed] == User.get_recipients_from_activity(activity)
 
     {:ok, user} = User.follow(user, actor)
-    {:ok, user_two} = User.follow(user_two, actor)
+    {:ok, _user_two} = User.follow(user_two, actor)
     recipients = User.get_recipients_from_activity(activity)
     assert length(recipients) == 2
     assert user in recipients
@@ -369,5 +495,16 @@ defmodule Pleroma.UserTest do
     # TODO: Remove favorites, repeats, delete activities.
 
     refute Repo.get(Activity, activity.id)
+  end
+
+  test "get_public_key_for_ap_id fetches a user that's not in the db" do
+    assert {:ok, _key} = User.get_public_key_for_ap_id("http://mastodon.example.org/users/admin")
+  end
+
+  test "insert or update a user from given data" do
+    user = insert(:user, %{nickname: "nick@name.de"})
+    data = %{ap_id: user.ap_id <> "xxx", name: user.name, nickname: user.nickname}
+
+    assert {:ok, %User{}} = User.insert_or_update_user(data)
   end
 end
