@@ -22,7 +22,9 @@ erl_crash.dump
 /config/*.secret.exs
 
 # Database setup file, some may forget to delete it
-/config/setup_db.psql
+/config/setup_db.psql*
+
+/config/generated*
 
 .DS_Store
 .env
